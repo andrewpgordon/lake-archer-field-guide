@@ -1,0 +1,394 @@
+<script>
+/* Mobile viewport must be set before layout; the artifact skeleton owns <head>,
+   so inject it here as the very first thing. */
+(function(){
+  var m=document.createElement('meta');
+  m.name='viewport';
+  m.content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+  document.head.appendChild(m);
+})();
+</script>
+<style>
+  :root{
+    --ground:#0a1a24; --panel:#10222e; --panel2:#173142; --line:#22475c;
+    --ink:#eaf3f6; --muted:#88a3b1; --accent:#34cfe6;
+    --good:#3fd982; --warn:#ffb43a; --alert:#ff5d62;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--ground);color:var(--ink);
+    font-family:var(--sans);overscroll-behavior:none;overflow:hidden}
+  #app{position:fixed;inset:0;display:flex;flex-direction:column}
+  canvas#map{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+
+  /* top status */
+  #status{position:relative;z-index:5;padding:calc(env(safe-area-inset-top) + 10px) 14px 12px;
+    background:linear-gradient(180deg,rgba(8,20,28,.94),rgba(8,20,28,.72) 78%,transparent);
+    transition:color .2s}
+  #eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--muted)}
+  #primary{font-size:30px;font-weight:750;line-height:1.05;letter-spacing:-.01em;
+    text-wrap:balance;margin:2px 0 8px;display:flex;align-items:center;gap:10px}
+  #primary .chev{font-size:30px;line-height:1;display:inline-block;transform-origin:50% 50%}
+  #stats{display:flex;gap:18px;font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums;
+    color:var(--muted)}
+  #stats b{color:var(--ink);font-weight:600}
+  .sev-good #primary{color:var(--good)} .sev-good #eyebrow{color:var(--good)}
+  .sev-warn #primary{color:var(--warn)} .sev-warn #eyebrow{color:var(--warn)}
+  .sev-alert #primary{color:var(--alert)} .sev-alert #eyebrow{color:var(--alert)}
+  .sev-idle #primary{color:var(--accent)}
+
+  /* bottom dock */
+  #dock{position:relative;z-index:5;margin-top:auto;padding:12px 12px calc(env(safe-area-inset-bottom) + 12px);
+    background:linear-gradient(0deg,rgba(8,20,28,.94),rgba(8,20,28,.55) 70%,transparent)}
+  #boxes{display:flex;gap:6px;overflow-x:auto;padding-bottom:10px;scrollbar-width:none}
+  #boxes::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;min-width:66px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:7px 9px}
+  .chip.here{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .chip .id{font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--muted)}
+  .chip .pct{font-family:var(--mono);font-size:17px;font-weight:600;font-variant-numeric:tabular-nums}
+  .chip .bar{height:4px;border-radius:3px;background:var(--panel2);margin-top:4px;overflow:hidden}
+  .chip .bar i{display:block;height:100%;background:var(--good);width:0}
+  .chip.done .pct{color:var(--good)}
+  .row{display:flex;gap:8px}
+  button{flex:1;font-family:var(--sans);font-size:15px;font-weight:600;color:var(--ink);
+    background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px;cursor:pointer}
+  button:active{transform:translateY(1px)}
+  button.accent{background:var(--accent);color:#04222b;border-color:var(--accent)}
+  button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  .ghost{background:transparent}
+
+  /* overlays */
+  .overlay{position:fixed;inset:0;z-index:20;background:rgba(6,15,21,.96);
+    display:flex;flex-direction:column;justify-content:center;align-items:center;gap:16px;
+    padding:28px;text-align:center}
+  .overlay h1{font-size:26px;font-weight:750;margin:0;letter-spacing:-.01em}
+  .overlay p{color:var(--muted);max-width:34ch;line-height:1.5;margin:0;font-size:15px}
+  .overlay .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:16px 18px;max-width:38ch;text-align:left;font-size:14px;color:var(--muted);line-height:1.55}
+  .overlay .card b{color:var(--ink)}
+  .hidden{display:none!important}
+  #expText{width:100%;max-width:40ch;height:120px;background:var(--panel);color:var(--ink);
+    border:1px solid var(--line);border-radius:10px;font-family:var(--mono);font-size:11px;padding:10px}
+  .legend{position:absolute;left:12px;bottom:calc(env(safe-area-inset-bottom) + 150px);z-index:4;
+    font-family:var(--mono);font-size:11px;color:var(--muted);background:rgba(8,20,28,.6);
+    border:1px solid var(--line);border-radius:8px;padding:6px 8px;line-height:1.7}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+</style>
+
+<div id="app">
+  <div id="status" class="sev-idle">
+    <div id="eyebrow">MILFOIL SURVEY · LAKE ARCHER</div>
+    <div id="primary"><span id="chev" class="chev hidden">➤</span><span id="pmsg">Waiting for GPS…</span></div>
+    <div id="stats">
+      <span><b id="spd">–</b> mph</span>
+      <span>GPS <b id="acc">–</b></span>
+      <span>box <b id="boxpct">–</b></span>
+      <span>lake <b id="totpct">0%</b></span>
+    </div>
+  </div>
+
+  <canvas id="map"></canvas>
+  <div class="legend">
+    <div><i style="background:#3fd982"></i>covered</div>
+    <div><i style="background:#22475c"></i>to&nbsp;drive</div>
+    <div><i style="background:#34cfe6"></i>you</div>
+  </div>
+
+  <div id="dock">
+    <div id="boxes"></div>
+    <div class="row" style="margin-bottom:8px">
+      <button id="followBtn" class="accent">Follow me</button>
+      <button id="lakeBtn" class="ghost">Whole lake</button>
+    </div>
+    <div class="row">
+      <button id="exportBtn">Export track</button>
+      <button id="resetBtn" class="ghost">Reset coverage</button>
+    </div>
+  </div>
+</div>
+
+<div id="start" class="overlay">
+  <div id="eyebrowStart" style="font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:var(--accent)">FIELD GUIDANCE</div>
+  <h1 style="text-wrap:balance">Lake Archer coverage guide</h1>
+  <p>Live map of the survey boxes. Cells turn <b style="color:var(--good)">green</b> as you cover them. Keep this open while you drive — it records your track for the coverage check.</p>
+  <div class="card">
+    <b>How to use</b><br>
+    • Steer the tight lanes on your chartplotter (this is the backup view).<br>
+    • Keep <b>2–3 mph</b>, straight over each box, turns outside.<br>
+    • Watch the top banner: it tells you the box, your speed, and GPS quality.<br>
+    • When done, tap <b>Export track</b> and send Andrew the file.
+  </div>
+  <p style="font-size:13px">Load this at the dock (needs signal once). GPS keeps working on the water with no cell service.</p>
+  <button id="startBtn" class="accent" style="max-width:22ch">Start survey</button>
+</div>
+
+<div id="exportOv" class="overlay hidden">
+  <h1>Your track</h1>
+  <p id="expSummary" style="font-size:14px"></p>
+  <textarea id="expText" readonly></textarea>
+  <div class="row" style="max-width:40ch;width:100%">
+    <a id="dlLink" download="lake_archer_track.gpx"><button class="accent" style="width:100%">Download GPX</button></a>
+    <button id="copyBtn" class="ghost">Copy</button>
+  </div>
+  <button id="closeExp" class="ghost" style="max-width:20ch">Back</button>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  // ---------- survey plan (embedded) ----------
+  var PLAN = {"lat0":42.0718,"lon0":-71.33752,"spacing_ft":15.0,"boxes":[
+    {"id":"B1","mode":"crosshatch","x0":-222.067,"y0":86.122,"x1":162.003,"y1":489.468},
+    {"id":"B2","mode":"crosshatch","x0":-363.616,"y0":176.432,"x1":-122.251,"y1":484.159},
+    {"id":"B3","mode":"parallel","x0":108.501,"y0":-1523.257,"x1":411.854,"y1":-1132.908},
+    {"id":"B4","mode":"parallel","x0":337.862,"y0":213.324,"x1":517.862,"y1":393.324},
+    {"id":"B5","mode":"parallel","x0":380.859,"y0":-39.671,"x1":560.859,"y1":149.036},
+    {"id":"B6","mode":"parallel","x0":-833.111,"y0":6.451,"x1":-653.111,"y1":186.451},
+    {"id":"B7","mode":"parallel","x0":94.964,"y0":-812.045,"x1":274.964,"y1":-632.045},
+    {"id":"B8","mode":"parallel","x0":-134.278,"y0":-226.189,"x1":45.722,"y1":-46.189},
+    {"id":"B9","mode":"parallel","x0":-809.512,"y0":-136.321,"x1":-629.512,"y1":43.679}
+  ]};
+  var FT_LAT=364000, CELL=15, COVER=18, SP=PLAN.spacing_ft;
+  var COS0=Math.cos(PLAN.lat0*Math.PI/180);
+  function toFt(lat,lon){return {x:(lon-PLAN.lon0)*FT_LAT*COS0, y:(lat-PLAN.lat0)*FT_LAT};}
+
+  // build cells per box + lanes
+  PLAN.boxes.forEach(function(b){
+    b.cells=[]; b.covered={}; b.ncov=0;
+    for(var cx=b.x0+CELL/2; cx<b.x1; cx+=CELL)
+      for(var cy=b.y0+CELL/2; cy<b.y1; cy+=CELL) b.cells.push([cx,cy]);
+    b.ntot=b.cells.length;
+    var w=b.x1-b.x0, h=b.y1-b.y0, vert=w<=h; b.lanes=[];
+    function L(a,b2,c,d){b.lanes.push([a,b2,c,d]);}
+    if(vert){ for(var x=b.x0;x<=b.x1+.1;x+=SP) L(x,b.y0,x,b.y1); }
+    else { for(var y=b.y0;y<=b.y1+.1;y+=SP) L(b.x0,y,b.x1,y); }
+    if(b.mode==="crosshatch"){
+      if(vert){ for(var y2=b.y0;y2<=b.y1+.1;y2+=SP) L(b.x0,y2,b.x1,y2); }
+      else { for(var x2=b.x0;x2<=b.x1+.1;x2+=SP) L(x2,b.y0,x2,b.y1); }
+    }
+  });
+
+  // ---------- persistence ----------
+  var KEY="lasurvey_cov_v1";
+  try{ var saved=JSON.parse(localStorage.getItem(KEY)||"{}");
+    PLAN.boxes.forEach(function(b){ if(saved[b.id]){ b.covered=saved[b.id];
+      b.ncov=Object.keys(b.covered).length; } });
+  }catch(e){}
+  function persist(){ var o={}; PLAN.boxes.forEach(function(b){o[b.id]=b.covered;});
+    try{localStorage.setItem(KEY,JSON.stringify(o));}catch(e){} }
+
+  // ---------- state ----------
+  var pos=null, acc=null, spd=0, hdg=null, track=[], last=null;
+  var follow=true, view={cx:0,cy:0,scale:1}, dpr=Math.min(window.devicePixelRatio||1,2.5);
+  var cv=document.getElementById("map"), ctx=cv.getContext("2d");
+
+  function resize(){ cv.width=innerWidth*dpr; cv.height=innerHeight*dpr;
+    cv.style.width=innerWidth+"px"; cv.style.height=innerHeight+"px"; fitView(); }
+  addEventListener("resize",resize);
+
+  function boundsAll(){ var x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+    PLAN.boxes.forEach(function(b){x0=Math.min(x0,b.x0);y0=Math.min(y0,b.y0);
+      x1=Math.max(x1,b.x1);y1=Math.max(y1,b.y1);});
+    return {x0:x0,y0:y0,x1:x1,y1:y1}; }
+  function fitView(){
+    var W=cv.width,H=cv.height;
+    if(follow && pos){
+      view.scale=Math.min(W,H)/260;          // ~260ft window when following
+      view.cx=pos.x; view.cy=pos.y;
+    } else {
+      var b=boundsAll(), pad=80;
+      view.scale=Math.min(W/(b.x1-b.x0+pad*2), H/(b.y1-b.y0+pad*2));
+      view.cx=(b.x0+b.x1)/2; view.cy=(b.y0+b.y1)/2;
+    }
+  }
+  function px(x,y){ return [cv.width/2+(x-view.cx)*view.scale,
+                            cv.height/2-(y-view.cy)*view.scale]; }
+
+  // ---------- render ----------
+  function draw(){
+    var W=cv.width,H=cv.height;
+    ctx.clearRect(0,0,W,H);
+    PLAN.boxes.forEach(function(b){
+      // covered cells
+      var s=CELL*view.scale;
+      for(var k in b.covered){ var c=b.covered[k]; var p=px(c[0],c[1]);
+        ctx.fillStyle="rgba(63,217,130,.30)"; ctx.fillRect(p[0]-s/2,p[1]-s/2,s,s); }
+      // lanes
+      ctx.strokeStyle="rgba(52,207,230,.18)"; ctx.lineWidth=1;
+      ctx.beginPath();
+      b.lanes.forEach(function(L){ var a=px(L[0],L[1]),d=px(L[2],L[3]);
+        ctx.moveTo(a[0],a[1]); ctx.lineTo(d[0],d[1]); });
+      ctx.stroke();
+      // box outline
+      var A=px(b.x0,b.y0),D=px(b.x1,b.y1);
+      ctx.strokeStyle=b.mode==="crosshatch"?"#3fd982":"#34cfe6"; ctx.lineWidth=2*dpr;
+      ctx.strokeRect(A[0],D[1],D[0]-A[0],A[1]-D[1]);
+      // label
+      ctx.fillStyle="rgba(234,243,246,.85)"; ctx.font=(13*dpr)+"px "+getComputedStyle(document.body).fontFamily;
+      ctx.textBaseline="bottom"; ctx.fillText(b.id+"  "+Math.round(100*b.ncov/b.ntot)+"%",A[0]+4*dpr,D[1]-4*dpr);
+    });
+    // breadcrumb
+    if(track.length>1){ ctx.strokeStyle="rgba(255,255,255,.35)"; ctx.lineWidth=2*dpr; ctx.beginPath();
+      for(var i=0;i<track.length;i++){ var p=px(track[i].x,track[i].y);
+        i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]); } ctx.stroke(); }
+    // guidance arrow to nearest gap
+    if(pos && gap){ var g=px(gap.x,gap.y), me=px(pos.x,pos.y);
+      ctx.strokeStyle="rgba(255,180,58,.9)"; ctx.lineWidth=3*dpr; ctx.setLineDash([8*dpr,6*dpr]);
+      ctx.beginPath(); ctx.moveTo(me[0],me[1]); ctx.lineTo(g[0],g[1]); ctx.stroke(); ctx.setLineDash([]); }
+    // position
+    if(pos){ var p=px(pos.x,pos.y);
+      if(acc){ ctx.fillStyle="rgba(52,207,230,.10)"; ctx.beginPath();
+        ctx.arc(p[0],p[1],Math.max(6,acc*3.28084*view.scale),0,7); ctx.fill(); }
+      if(hdg!=null){ ctx.save(); ctx.translate(p[0],p[1]); ctx.rotate(hdg*Math.PI/180);
+        ctx.fillStyle="#34cfe6"; ctx.beginPath(); ctx.moveTo(0,-13*dpr);
+        ctx.lineTo(8*dpr,9*dpr); ctx.lineTo(-8*dpr,9*dpr); ctx.closePath(); ctx.fill(); ctx.restore(); }
+      else { ctx.fillStyle="#34cfe6"; ctx.beginPath(); ctx.arc(p[0],p[1],7*dpr,0,7); ctx.fill(); }
+      ctx.strokeStyle="#04222b"; ctx.lineWidth=2*dpr;
+      ctx.beginPath(); ctx.arc(p[0],p[1],7*dpr,0,7); ctx.stroke();
+    }
+    requestAnimationFrame(draw);
+  }
+
+  // ---------- coverage + guidance ----------
+  function inBox(b,x,y){ return x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1; }
+  var gap=null, curBox=null;
+  function updateCoverage(){
+    if(!pos) return;
+    curBox=null;
+    PLAN.boxes.forEach(function(b){ if(inBox(b,pos.x,pos.y)) curBox=b; });
+    // mark covered cells near position (within COVER ft) in ANY box
+    PLAN.boxes.forEach(function(b){
+      // quick reject
+      if(pos.x<b.x0-COVER||pos.x>b.x1+COVER||pos.y<b.y0-COVER||pos.y>b.y1+COVER) return;
+      b.cells.forEach(function(c){ var key=c[0].toFixed(0)+"_"+c[1].toFixed(0);
+        if(b.covered[key]) return;
+        var dx=c[0]-pos.x, dy=c[1]-pos.y;
+        if(dx*dx+dy*dy<=COVER*COVER){ b.covered[key]=c; b.ncov++; }
+      });
+    });
+    persist();
+    // nearest uncovered cell (guidance)
+    gap=null; var best=1e18, target=curBox?[curBox]:PLAN.boxes;
+    target.forEach(function(b){ b.cells.forEach(function(c){
+      var key=c[0].toFixed(0)+"_"+c[1].toFixed(0); if(b.covered[key])return;
+      var dx=c[0]-pos.x,dy=c[1]-pos.y,d=dx*dx+dy*dy; if(d<best){best=d;gap={x:c[0],y:c[1],box:b};}
+    });});
+    renderHUD();
+  }
+
+  // ---------- HUD ----------
+  var elP=document.getElementById("pmsg"), elE=document.getElementById("eyebrow"),
+      elChev=document.getElementById("chev"), elStatus=document.getElementById("status"),
+      elSpd=document.getElementById("spd"), elAcc=document.getElementById("acc"),
+      elBoxpct=document.getElementById("boxpct"), elTot=document.getElementById("totpct");
+  function bearing(fromx,fromy,tox,toy){ // 0=up(N-ish screen), clockwise
+    return Math.atan2(tox-fromx,toy-fromy)*180/Math.PI; }
+  function renderHUD(){
+    var sev="sev-good", eye, msg, chev=false;
+    var accM=acc?acc:99, weak=accM>15;
+    if(!pos){ setStatus("sev-idle","MILFOIL SURVEY · LAKE ARCHER","Waiting for GPS…"); return; }
+    if(weak){ sev="sev-alert"; eye="WEAK GPS"; msg="Hold position — signal ±"+Math.round(accM)+" m"; }
+    else if(spd<0.6){ sev="sev-alert"; eye=curBox?("IN "+curBox.id):"ON PLAN"; msg="Stopped — no data recording"; }
+    else if(!curBox){
+      sev="sev-warn";
+      if(gap){ var d=Math.hypot(gap.x-pos.x,gap.y-pos.y);
+        eye="OFF PLAN"; msg="Go to "+gap.box.id+" · "+Math.round(d)+" ft"; chev=true;
+        elChev.style.transform="rotate("+bearing(pos.x,pos.y,gap.x,gap.y)+"deg)"; }
+      else { eye="OFF PLAN"; msg="Head to a survey box"; }
+    }
+    else if(spd>4.6){ sev="sev-warn"; eye="IN "+curBox.id; msg="Slow down — keep 2–3 mph"; }
+    else {
+      sev="sev-good"; eye="COVERING "+curBox.id;
+      if(gap && gap.box===curBox){ var dd=Math.hypot(gap.x-pos.x,gap.y-pos.y);
+        msg="New ground · "+Math.round(dd)+" ft"; chev=true;
+        elChev.style.transform="rotate("+bearing(pos.x,pos.y,gap.x,gap.y)+"deg)"; }
+      else msg="On track";
+    }
+    setStatus(sev,eye,msg,chev);
+    elSpd.textContent=spd.toFixed(1);
+    elAcc.textContent="±"+Math.round(accM)+"m";
+    elBoxpct.textContent=curBox?Math.round(100*curBox.ncov/curBox.ntot)+"%":"–";
+    var tc=0,tn=0; PLAN.boxes.forEach(function(b){tc+=b.ncov;tn+=b.ntot;});
+    elTot.textContent=Math.round(100*tc/tn)+"%";
+    renderChips();
+  }
+  function setStatus(sev,eye,msg,chev){ elStatus.className=sev;
+    elE.textContent=eye; elP.textContent=msg;
+    elChev.classList.toggle("hidden",!chev); }
+
+  var elBoxes=document.getElementById("boxes"), chipEls={};
+  function buildChips(){ PLAN.boxes.forEach(function(b){
+    var d=document.createElement("div"); d.className="chip";
+    d.innerHTML='<div class="id">'+b.id+'</div><div class="pct">0%</div><div class="bar"><i></i></div>';
+    d.onclick=function(){ follow=false; view.scale=Math.min(cv.width,cv.height)/Math.max(b.x1-b.x0,b.y1-b.y0)/1.2;
+      view.cx=(b.x0+b.x1)/2; view.cy=(b.y0+b.y1)/2; setFollowBtn(); };
+    elBoxes.appendChild(d); chipEls[b.id]=d; }); renderChips(); }
+  function renderChips(){ PLAN.boxes.forEach(function(b){ var el=chipEls[b.id]; if(!el)return;
+    var p=Math.round(100*b.ncov/b.ntot);
+    el.querySelector(".pct").textContent=p+"%"; el.querySelector(".bar i").style.width=p+"%";
+    el.classList.toggle("done",p>=85); el.classList.toggle("here",curBox&&curBox.id===b.id); }); }
+
+  // ---------- geolocation ----------
+  function onFix(p){
+    var c=p.coords, f=toFt(c.latitude,c.longitude);
+    pos={x:f.x,y:f.y}; acc=c.accuracy;
+    if(c.speed!=null && !isNaN(c.speed)) spd=c.speed*2.23694;
+    else if(last){ var dt=(p.timestamp-last.t)/1000; if(dt>0){
+      spd=Math.hypot(f.x-last.x,f.y-last.y)/dt*0.681818; } }
+    if(c.heading!=null && !isNaN(c.heading)) hdg=c.heading;
+    else if(last){ var dx=f.x-last.x,dy=f.y-last.y; if(Math.hypot(dx,dy)>3) hdg=Math.atan2(dx,dy)*180/Math.PI; }
+    last={x:f.x,y:f.y,t:p.timestamp};
+    track.push({lat:c.latitude,lon:c.longitude,t:p.timestamp,acc:c.accuracy});
+    if(follow) fitView();
+    updateCoverage();
+  }
+  function onErr(e){ setStatus("sev-alert","GPS ERROR",
+    e.code===1?"Allow location access, then reload":"No GPS fix yet — clear sky helps"); }
+
+  // ---------- controls ----------
+  document.getElementById("followBtn").onclick=function(){follow=true;fitView();setFollowBtn();};
+  document.getElementById("lakeBtn").onclick=function(){follow=false;fitView();setFollowBtn();};
+  function setFollowBtn(){ document.getElementById("followBtn").classList.toggle("accent",follow);
+    document.getElementById("lakeBtn").classList.toggle("accent",!follow); }
+  document.getElementById("resetBtn").onclick=function(){
+    if(!confirm("Clear all covered cells? Your recorded track is kept.")) return;
+    PLAN.boxes.forEach(function(b){b.covered={};b.ncov=0;}); persist(); renderHUD(); };
+
+  function gpx(){
+    var s='<?xml version="1.0"?>\n<gpx version="1.1" creator="LakeArcherFieldGuide"><trk><name>Lake Archer survey</name><trkseg>\n';
+    track.forEach(function(t){ s+='<trkpt lat="'+t.lat.toFixed(6)+'" lon="'+t.lon.toFixed(6)+'">'+
+      '<time>'+new Date(t.t).toISOString()+'</time></trkpt>\n'; });
+    return s+'</trkseg></trk></gpx>\n';
+  }
+  document.getElementById("exportBtn").onclick=function(){
+    var g=gpx(); document.getElementById("expText").value=g;
+    var tc=0,tn=0; PLAN.boxes.forEach(function(b){tc+=b.ncov;tn+=b.ntot;});
+    document.getElementById("expSummary").textContent=track.length+" track points · lake coverage "+
+      Math.round(100*tc/tn)+"%. Download and send to Andrew.";
+    try{ var blob=new Blob([g],{type:"application/gpx+xml"});
+      document.getElementById("dlLink").href=URL.createObjectURL(blob); }catch(e){}
+    document.getElementById("exportOv").classList.remove("hidden");
+  };
+  document.getElementById("closeExp").onclick=function(){document.getElementById("exportOv").classList.add("hidden");};
+  document.getElementById("copyBtn").onclick=function(){ var t=document.getElementById("expText");
+    t.select(); try{document.execCommand("copy");}catch(e){}
+    try{navigator.clipboard.writeText(t.value);}catch(e){} this.textContent="Copied"; };
+
+  var wakeLock=null;
+  document.getElementById("startBtn").onclick=function(){
+    document.getElementById("start").classList.add("hidden");
+    resize(); buildChips(); requestAnimationFrame(draw);
+    if("geolocation" in navigator)
+      navigator.geolocation.watchPosition(onFix,onErr,{enableHighAccuracy:true,maximumAge:1000,timeout:15000});
+    else setStatus("sev-alert","NO GPS","This device has no geolocation");
+    try{ navigator.wakeLock&&navigator.wakeLock.request("screen").then(function(w){wakeLock=w;}); }catch(e){}
+  };
+  document.addEventListener("visibilitychange",function(){
+    if(document.visibilityState==="visible")
+      try{navigator.wakeLock&&navigator.wakeLock.request("screen").then(function(w){wakeLock=w;});}catch(e){}
+  });
+})();
+</script>
