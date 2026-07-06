@@ -76,6 +76,9 @@
     font-family:var(--mono);font-size:11px;color:var(--muted);background:rgba(8,20,28,.6);
     border:1px solid var(--line);border-radius:8px;padding:6px 8px;line-height:1.7}
   .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  #enableGps{position:absolute;left:50%;bottom:calc(env(safe-area-inset-bottom) + 210px);
+    transform:translateX(-50%);z-index:8;width:auto;flex:none;background:var(--alert);color:#2a0608;
+    border:none;font-weight:800;padding:13px 22px;border-radius:26px;box-shadow:0 6px 18px rgba(0,0,0,.45)}
 </style>
 
 <div id="app">
@@ -91,6 +94,7 @@
   </div>
 
   <canvas id="map"></canvas>
+  <button id="enableGps" class="hidden">Enable GPS</button>
   <div class="legend">
     <div><i style="background:#3fd982"></i>covered</div>
     <div><i style="background:#22475c"></i>to&nbsp;drive</div>
@@ -332,21 +336,48 @@
     el.classList.toggle("done",p>=85); el.classList.toggle("here",curBox&&curBox.id===b.id); }); }
 
   // ---------- geolocation ----------
+  var watchId=null, searchTimer=null, elEnable;
   function onFix(p){
-    var c=p.coords, f=toFt(c.latitude,c.longitude);
-    pos={x:f.x,y:f.y}; acc=c.accuracy;
-    if(c.speed!=null && !isNaN(c.speed)) spd=c.speed*2.23694;
-    else if(last){ var dt=(p.timestamp-last.t)/1000; if(dt>0){
-      spd=Math.hypot(f.x-last.x,f.y-last.y)/dt*0.681818; } }
-    if(c.heading!=null && !isNaN(c.heading)) hdg=c.heading;
-    else if(last){ var dx=f.x-last.x,dy=f.y-last.y; if(Math.hypot(dx,dy)>3) hdg=Math.atan2(dx,dy)*180/Math.PI; }
-    last={x:f.x,y:f.y,t:p.timestamp};
-    track.push({lat:c.latitude,lon:c.longitude,t:p.timestamp,acc:c.accuracy});
-    if(follow) fitView();
-    updateCoverage();
+    try{
+      clearTimeout(searchTimer);
+      var c=p.coords, f=toFt(c.latitude,c.longitude);
+      pos={x:f.x,y:f.y}; acc=c.accuracy;
+      if(c.speed!=null && !isNaN(c.speed) && c.speed>=0) spd=c.speed*2.23694;
+      else if(last){ var dt=(p.timestamp-last.t)/1000; if(dt>0){
+        spd=Math.hypot(f.x-last.x,f.y-last.y)/dt*0.681818; } }
+      if(c.heading!=null && !isNaN(c.heading)) hdg=c.heading;
+      else if(last){ var dx=f.x-last.x,dy=f.y-last.y; if(Math.hypot(dx,dy)>3) hdg=Math.atan2(dx,dy)*180/Math.PI; }
+      last={x:f.x,y:f.y,t:p.timestamp};
+      track.push({lat:c.latitude,lon:c.longitude,t:p.timestamp,acc:c.accuracy});
+      if(elEnable) elEnable.classList.add("hidden");
+      if(follow) fitView();
+      updateCoverage();
+    }catch(err){ setStatus("sev-alert","APP ERROR",(err&&err.message)||"reload the page"); }
   }
-  function onErr(e){ setStatus("sev-alert","GPS ERROR",
-    e.code===1?"Allow location access, then reload":"No GPS fix yet — clear sky helps"); }
+  function onErr(e){
+    if(e && e.code===1) setStatus("sev-alert","LOCATION BLOCKED","Allow location for this site in your phone browser settings, then tap Enable GPS");
+    else if(e && e.code===3) setStatus("sev-warn","NO FIX YET","Searching — you need open sky. Tap Enable GPS to retry");
+    else setStatus("sev-alert","GPS ERROR",(e&&e.message)||"Tap Enable GPS to retry");
+    if(elEnable) elEnable.classList.remove("hidden");
+  }
+  function startGeo(){
+    if(!("geolocation" in navigator)){ setStatus("sev-alert","NO GPS","This device has no geolocation"); return; }
+    setStatus("sev-idle","LOCATING","Allow location if asked — searching for GPS…");
+    if(navigator.permissions && navigator.permissions.query){
+      navigator.permissions.query({name:"geolocation"}).then(function(st){
+        if(st.state==="denied"){ setStatus("sev-alert","LOCATION BLOCKED",
+          "Location is blocked for this site. Turn it on in your browser settings, then tap Enable GPS");
+          if(elEnable) elEnable.classList.remove("hidden"); }
+      }).catch(function(){});
+    }
+    navigator.geolocation.getCurrentPosition(onFix,onErr,{enableHighAccuracy:true,timeout:25000,maximumAge:0});
+    if(watchId!=null) navigator.geolocation.clearWatch(watchId);
+    watchId=navigator.geolocation.watchPosition(onFix,onErr,{enableHighAccuracy:true,maximumAge:1000,timeout:30000});
+    clearTimeout(searchTimer);
+    searchTimer=setTimeout(function(){ if(!pos){
+      setStatus("sev-warn","SEARCHING","No fix yet. Make sure Location Services are ON and you have open sky (GPS won’t lock indoors). Tap Enable GPS to retry.");
+      if(elEnable) elEnable.classList.remove("hidden"); } }, 9000);
+  }
 
   // ---------- controls ----------
   document.getElementById("followBtn").onclick=function(){follow=true;fitView();setFollowBtn();};
@@ -377,13 +408,13 @@
     t.select(); try{document.execCommand("copy");}catch(e){}
     try{navigator.clipboard.writeText(t.value);}catch(e){} this.textContent="Copied"; };
 
-  var wakeLock=null;
+  var wakeLock=null, started=false;
+  elEnable=document.getElementById("enableGps");
+  elEnable.onclick=startGeo;
   document.getElementById("startBtn").onclick=function(){
     document.getElementById("start").classList.add("hidden");
-    resize(); buildChips(); requestAnimationFrame(draw);
-    if("geolocation" in navigator)
-      navigator.geolocation.watchPosition(onFix,onErr,{enableHighAccuracy:true,maximumAge:1000,timeout:15000});
-    else setStatus("sev-alert","NO GPS","This device has no geolocation");
+    resize(); if(!started){ buildChips(); requestAnimationFrame(draw); started=true; }
+    startGeo();
     try{ navigator.wakeLock&&navigator.wakeLock.request("screen").then(function(w){wakeLock=w;}); }catch(e){}
   };
   document.addEventListener("visibilitychange",function(){
