@@ -109,7 +109,7 @@
     <div id="boxes"></div>
     <div class="row" style="margin-bottom:8px">
       <button id="followBtn" class="accent">Follow me</button>
-      <button id="lakeBtn" class="ghost">Whole lake</button>
+      <button id="lakeBtn" class="ghost">Me + lake</button>
     </div>
     <div class="row">
       <button id="exportBtn">Export track</button>
@@ -230,6 +230,45 @@
   }
   function px(x,y){ return [cv.width/2+(x-view.cx)*view.scale,
                             cv.height/2-(y-view.cy)*view.scale]; }
+  function screenToWorld(sx,sy){ return {x:view.cx+(sx-cv.width/2)/view.scale,
+                                         y:view.cy-(sy-cv.height/2)/view.scale}; }
+  function clampScale(){ view.scale=Math.max(0.0016,Math.min(9,view.scale)); }
+  function fitBounds(x0,y0,x1,y1){ var W=cv.width,H=cv.height,pad=60*dpr;
+    view.scale=Math.min((W-2*pad)/Math.max(1,x1-x0),(H-2*pad)/Math.max(1,y1-y0));
+    clampScale(); view.cx=(x0+x1)/2; view.cy=(y0+y1)/2; }
+  function fitAll(){ var b=boundsAll(),x0=b.x0,y0=b.y0,x1=b.x1,y1=b.y1;
+    if(pos){ x0=Math.min(x0,pos.x);y0=Math.min(y0,pos.y);x1=Math.max(x1,pos.x);y1=Math.max(y1,pos.y); }
+    fitBounds(x0,y0,x1,y1); }
+
+  // ---------- pan / zoom gestures ----------
+  var ptrs={}, pinch=null;
+  function manual(){ follow=false; if(typeof setFollowBtn==="function") setFollowBtn(); }
+  cv.addEventListener("pointerdown",function(e){ try{cv.setPointerCapture(e.pointerId);}catch(_){}
+    ptrs[e.pointerId]={x:e.clientX*dpr,y:e.clientY*dpr};
+    if(Object.keys(ptrs).length===2) pinch=null; });
+  cv.addEventListener("pointermove",function(e){
+    if(!ptrs[e.pointerId]) return;
+    var now={x:e.clientX*dpr,y:e.clientY*dpr}, prev=ptrs[e.pointerId];
+    ptrs[e.pointerId]=now;
+    var ids=Object.keys(ptrs);
+    if(ids.length===1){
+      view.cx-=(now.x-prev.x)/view.scale; view.cy+=(now.y-prev.y)/view.scale; manual();
+    } else if(ids.length>=2){
+      var A=ptrs[ids[0]], B=ptrs[ids[1]];
+      var dist=Math.hypot(A.x-B.x,A.y-B.y), mx=(A.x+B.x)/2, my=(A.y+B.y)/2;
+      if(pinch && pinch.dist>0){ var w=screenToWorld(mx,my);
+        view.scale*=dist/pinch.dist; clampScale();
+        view.cx=w.x-(mx-cv.width/2)/view.scale; view.cy=w.y+(my-cv.height/2)/view.scale; manual(); }
+      pinch={dist:dist,mx:mx,my:my};
+    }
+  });
+  function upPtr(e){ delete ptrs[e.pointerId]; if(Object.keys(ptrs).length<2) pinch=null; }
+  cv.addEventListener("pointerup",upPtr); cv.addEventListener("pointercancel",upPtr);
+  cv.addEventListener("wheel",function(e){ e.preventDefault();
+    var sx=e.clientX*dpr, sy=e.clientY*dpr, w=screenToWorld(sx,sy);
+    view.scale*=Math.pow(1.0016,-e.deltaY); clampScale();
+    view.cx=w.x-(sx-cv.width/2)/view.scale; view.cy=w.y+(sy-cv.height/2)/view.scale; manual();
+  },{passive:false});
 
   // ---------- render ----------
   function draw(){
@@ -458,7 +497,7 @@
 
   // ---------- controls ----------
   document.getElementById("followBtn").onclick=function(){follow=true;fitView();setFollowBtn();};
-  document.getElementById("lakeBtn").onclick=function(){follow=false;fitView();setFollowBtn();};
+  document.getElementById("lakeBtn").onclick=function(){follow=false;fitAll();setFollowBtn();};
   function setFollowBtn(){ document.getElementById("followBtn").classList.toggle("accent",follow);
     document.getElementById("lakeBtn").classList.toggle("accent",!follow); }
   document.getElementById("resetBtn").onclick=function(){
