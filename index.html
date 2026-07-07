@@ -101,8 +101,9 @@
   <button id="enableGps" class="hidden">Enable GPS</button>
   <div class="legend">
     <div><i style="background:#3fd982"></i>covered</div>
-    <div><i style="background:#22475c"></i>to&nbsp;drive</div>
+    <div><i style="background:#ff5d62"></i>milfoil</div>
     <div><i style="background:#34cfe6"></i>you</div>
+    <div style="opacity:.7;margin-top:2px">imagery: Esri</div>
   </div>
 
   <div id="dock">
@@ -110,6 +111,7 @@
     <div class="row" style="margin-bottom:8px">
       <button id="followBtn" class="accent">Follow me</button>
       <button id="lakeBtn" class="ghost">Me + lake</button>
+      <button id="satBtn" class="accent" style="flex:0 0 auto;min-width:64px">Sat</button>
     </div>
     <div class="row">
       <button id="exportBtn">Export track</button>
@@ -178,6 +180,14 @@
   var isAndroid=/android/i.test(UA);
   var diag={secure:(window.isSecureContext!==false),geo:("geolocation" in navigator),perm:"?",fixes:0,err:""};
   function toFt(lat,lon){return {x:(lon-PLAN.lon0)*FT_LAT*COS0, y:(lat-PLAN.lat0)*FT_LAT};}
+
+  // ---------- satellite basemap (Esri World Imagery) ----------
+  var basemap=true, tiles={};
+  function tileURL(z,x,y){ return "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"+z+"/"+y+"/"+x; }
+  function lon2t(lon,z){ return (lon+180)/360*Math.pow(2,z); }
+  function lat2t(lat,z){ var r=lat*Math.PI/180; return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*Math.pow(2,z); }
+  function t2lon(x,z){ return x/Math.pow(2,z)*360-180; }
+  function t2lat(y,z){ var n=Math.PI-2*Math.PI*y/Math.pow(2,z); return 180/Math.PI*Math.atan(0.5*(Math.exp(n)-Math.exp(-n))); }
 
   // build cells per box + lanes
   PLAN.boxes.forEach(function(b){
@@ -271,12 +281,38 @@
   },{passive:false});
 
   // ---------- render ----------
+  function drawBasemap(W,H){
+    if(!basemap) return;
+    var pxPerDegLon=view.scale*FT_LAT*COS0;
+    if(pxPerDegLon<=0) return;
+    var z=Math.round(Math.log(pxPerDegLon*360/256)/Math.log(2));
+    z=Math.max(11,Math.min(19,z));
+    var a=screenToWorld(0,0), b=screenToWorld(W,H);
+    var latA=PLAN.lat0+a.y/FT_LAT, lonA=PLAN.lon0+a.x/(FT_LAT*COS0);
+    var latB=PLAN.lat0+b.y/FT_LAT, lonB=PLAN.lon0+b.x/(FT_LAT*COS0);
+    var lonMin=Math.min(lonA,lonB), lonMax=Math.max(lonA,lonB);
+    var latMin=Math.min(latA,latB), latMax=Math.max(latA,latB);
+    var xMin=Math.floor(lon2t(lonMin,z)), xMax=Math.floor(lon2t(lonMax,z));
+    var yMin=Math.floor(lat2t(latMax,z)), yMax=Math.floor(lat2t(latMin,z));
+    var n=0;
+    for(var tx=xMin;tx<=xMax;tx++) for(var ty=yMin;ty<=yMax;ty++){
+      if(n++>80) return;
+      var key=z+"/"+tx+"/"+ty, img=tiles[key];
+      if(img===undefined){ img=new Image(); tiles[key]=img; img.src=tileURL(z,tx,ty); }
+      if(img.complete && img.naturalWidth){
+        var nw=toFt(t2lat(ty,z),t2lon(tx,z)), se=toFt(t2lat(ty+1,z),t2lon(tx+1,z));
+        var p1=px(nw.x,nw.y), p2=px(se.x,se.y);
+        ctx.drawImage(img,p1[0],p1[1],(p2[0]-p1[0])+1,(p2[1]-p1[1])+1);
+      }
+    }
+  }
   function draw(){
     var W=cv.width,H=cv.height;
     ctx.clearRect(0,0,W,H);
+    drawBasemap(W,H);
     // reference background: previously-surveyed water (tracks) + milfoil landmarks
     if(REF.tracks.length){
-      ctx.strokeStyle="rgba(52,207,230,.10)"; ctx.lineWidth=1;
+      ctx.strokeStyle=basemap?"rgba(120,230,255,.28)":"rgba(52,207,230,.10)"; ctx.lineWidth=1;
       ctx.beginPath();
       REF.tracks.forEach(function(t){ for(var i=0;i<t.length;i++){ var p=px(t[i][0],t[i][1]);
         i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]); } });
@@ -498,6 +534,8 @@
   // ---------- controls ----------
   document.getElementById("followBtn").onclick=function(){follow=true;fitView();setFollowBtn();};
   document.getElementById("lakeBtn").onclick=function(){follow=false;fitAll();setFollowBtn();};
+  document.getElementById("satBtn").onclick=function(){ basemap=!basemap;
+    this.classList.toggle("accent",basemap); this.textContent=basemap?"Sat":"Sat off"; };
   function setFollowBtn(){ document.getElementById("followBtn").classList.toggle("accent",follow);
     document.getElementById("lakeBtn").classList.toggle("accent",!follow); }
   document.getElementById("resetBtn").onclick=function(){
