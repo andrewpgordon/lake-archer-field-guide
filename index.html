@@ -154,7 +154,10 @@
     <a id="dlLink" download="lake_archer_track.gpx"><button class="accent" style="width:100%">Download GPX</button></a>
     <button id="copyBtn" class="ghost">Copy</button>
   </div>
-  <button id="closeExp" class="ghost" style="max-width:20ch">Back</button>
+  <div class="row" style="max-width:40ch;width:100%">
+    <button id="closeExp" class="ghost">Back</button>
+    <button id="newTrackBtn" class="ghost">Start new track</button>
+  </div>
 </div>
 
 <script>
@@ -213,9 +216,14 @@
   }catch(e){}
   function persist(){ var o={}; PLAN.boxes.forEach(function(b){o[b.id]=b.covered;});
     try{localStorage.setItem(KEY,JSON.stringify(o));}catch(e){} }
+  // track persistence: survive a phone lock / tab reload / crash mid-survey
+  var KEY_TRACK="lasurvey_track_v1", trackSaveN=0;
+  function restoreTrack(){ try{ var t=JSON.parse(localStorage.getItem(KEY_TRACK)||"[]");
+    return Array.isArray(t)?t:[]; }catch(e){ return []; } }
+  function saveTrack(){ try{ localStorage.setItem(KEY_TRACK,JSON.stringify(track)); }catch(e){} }
 
   // ---------- state ----------
-  var pos=null, acc=null, spd=0, hdg=null, track=[], last=null;
+  var pos=null, acc=null, spd=0, hdg=null, track=restoreTrack(), last=null;
   var follow=true, view={cx:0,cy:0,scale:1}, dpr=Math.min(window.devicePixelRatio||1,2.5);
   var cv=document.getElementById("map"), ctx=cv.getContext("2d");
 
@@ -471,7 +479,8 @@
       if(c.heading!=null && !isNaN(c.heading)) hdg=c.heading;
       else if(last){ var dx=f.x-last.x,dy=f.y-last.y; if(Math.hypot(dx,dy)>3) hdg=Math.atan2(dx,dy)*180/Math.PI; }
       last={x:f.x,y:f.y,t:p.timestamp};
-      track.push({lat:c.latitude,lon:c.longitude,t:p.timestamp,acc:c.accuracy});
+      track.push({lat:c.latitude,lon:c.longitude,t:p.timestamp,acc:c.accuracy,x:f.x,y:f.y});
+      if(++trackSaveN%3===0) saveTrack();       // persist every 3 fixes (survives reload)
       diag.fixes++; diag.err=""; diag.perm="granted"; updateDiag();
       if(elEnable) elEnable.classList.add("hidden");
       if(follow) fitView();
@@ -558,6 +567,9 @@
     document.getElementById("exportOv").classList.remove("hidden");
   };
   document.getElementById("closeExp").onclick=function(){document.getElementById("exportOv").classList.add("hidden");};
+  document.getElementById("newTrackBtn").onclick=function(){
+    if(!confirm("Clear the recorded track and start a fresh one? (Download it first if you need it.)")) return;
+    track.length=0; saveTrack(); document.getElementById("exportOv").classList.add("hidden"); };
   document.getElementById("copyBtn").onclick=function(){ var t=document.getElementById("expText");
     t.select(); try{document.execCommand("copy");}catch(e){}
     try{navigator.clipboard.writeText(t.value);}catch(e){} this.textContent="Copied"; };
