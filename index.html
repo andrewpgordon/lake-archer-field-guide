@@ -100,9 +100,9 @@
   <canvas id="map"></canvas>
   <button id="enableGps" class="hidden">Enable GPS</button>
   <div class="legend">
-    <div><i style="background:#3fd982"></i>covered</div>
+    <div><i style="background:#3fd982"></i>covered swath</div>
     <div><i style="background:#ff5d62"></i>milfoil</div>
-    <div><i style="background:#34cfe6"></i>you</div>
+    <div><i style="background:#ffffff"></i>your track</div>
     <div style="opacity:.7;margin-top:2px">imagery: Esri</div>
   </div>
 
@@ -110,12 +110,13 @@
     <div id="boxes"></div>
     <div class="row" style="margin-bottom:8px">
       <button id="followBtn" class="accent">Follow me</button>
-      <button id="lakeBtn" class="ghost">Me + lake</button>
-      <button id="satBtn" class="accent" style="flex:0 0 auto;min-width:64px">Sat</button>
+      <button id="lakeBtn" class="ghost">My trip</button>
+      <button id="satBtn" class="accent" style="flex:0 0 auto;min-width:56px">Sat</button>
     </div>
     <div class="row">
       <button id="exportBtn">Export track</button>
-      <button id="resetBtn" class="ghost">Reset coverage</button>
+      <button id="swathBtn" class="ghost" style="flex:0 0 auto;min-width:84px">Swath 60ft</button>
+      <button id="resetBtn" class="ghost">Reset</button>
     </div>
   </div>
 </div>
@@ -186,6 +187,7 @@
 
   // ---------- satellite basemap (Esri World Imagery) ----------
   var basemap=true, tiles={};
+  var swathFt=60;                 // coverage band width (ft); cycles via Swath button
   function tileURL(z,x,y){ return "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"+z+"/"+y+"/"+x; }
   function lon2t(lon,z){ return (lon+180)/360*Math.pow(2,z); }
   function lat2t(lat,z){ var r=lat*Math.PI/180; return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*Math.pow(2,z); }
@@ -238,7 +240,7 @@
   function fitView(){
     var W=cv.width,H=cv.height;
     if(follow && pos){
-      view.scale=Math.min(W,H)/260;          // ~260ft window when following
+      view.scale=Math.min(W,H)/420;          // ~420ft window when following (more trail visible)
       view.cx=pos.x; view.cy=pos.y;
     } else {
       var b=boundsAll(), pad=80;
@@ -256,7 +258,16 @@
     clampScale(); view.cx=(x0+x1)/2; view.cy=(y0+y1)/2; }
   function fitAll(){ var b=boundsAll(),x0=b.x0,y0=b.y0,x1=b.x1,y1=b.y1;
     if(pos){ x0=Math.min(x0,pos.x);y0=Math.min(y0,pos.y);x1=Math.max(x1,pos.x);y1=Math.max(y1,pos.y); }
+    for(var i=0;i<track.length;i+=Math.max(1,Math.floor(track.length/200))){ var t=track[i];
+      var tx=(t.x!=null?t.x:0), ty=(t.y!=null?t.y:0);
+      x0=Math.min(x0,tx);y0=Math.min(y0,ty);x1=Math.max(x1,tx);y1=Math.max(y1,ty); }
     fitBounds(x0,y0,x1,y1); }
+  function fitTrip(){ if(track.length<2){ fitAll(); return; }
+    var x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+    track.forEach(function(t){ if(t.x==null)return; x0=Math.min(x0,t.x);y0=Math.min(y0,t.y);
+      x1=Math.max(x1,t.x);y1=Math.max(y1,t.y); });
+    if(pos){ x0=Math.min(x0,pos.x);y0=Math.min(y0,pos.y);x1=Math.max(x1,pos.x);y1=Math.max(y1,pos.y); }
+    fitBounds(x0-40,y0-40,x1+40,y1+40); }
 
   // ---------- pan / zoom gestures ----------
   var ptrs={}, pinch=null;
@@ -351,9 +362,24 @@
       ctx.textBaseline="bottom"; ctx.fillText(b.id+"  "+Math.round(100*b.ncov/b.ntot)+"%",A[0]+4*dpr,D[1]-4*dpr);
     });
     // breadcrumb
-    if(track.length>1){ ctx.strokeStyle="rgba(255,255,255,.35)"; ctx.lineWidth=2*dpr; ctx.beginPath();
-      for(var i=0;i<track.length;i++){ var p=px(track[i].x,track[i].y);
-        i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]); } ctx.stroke(); }
+    if(track.length>1){
+      var tpts=[];
+      for(var i=0;i<track.length;i++){ var tp=track[i];
+        var wx=(tp.x!=null?tp.x:(tp.lon-PLAN.lon0)*FT_LAT*COS0);
+        var wy=(tp.y!=null?tp.y:(tp.lat-PLAN.lat0)*FT_LAT);
+        tpts.push(px(wx,wy)); }
+      // coverage swath: band of SWATH_FT width painted along the path (scales w/ zoom)
+      if(swathFt>0){ ctx.strokeStyle="rgba(63,217,130,.20)";
+        ctx.lineWidth=Math.max(3,swathFt*view.scale); ctx.lineJoin="round"; ctx.lineCap="round";
+        ctx.beginPath();
+        for(var j=0;j<tpts.length;j++){ j?ctx.lineTo(tpts[j][0],tpts[j][1]):ctx.moveTo(tpts[j][0],tpts[j][1]); }
+        ctx.stroke(); }
+      // exact trail (bright, always visible)
+      ctx.strokeStyle="rgba(255,255,255,.9)"; ctx.lineWidth=2.5*dpr; ctx.lineJoin="round"; ctx.lineCap="round";
+      ctx.beginPath();
+      for(var k=0;k<tpts.length;k++){ k?ctx.lineTo(tpts[k][0],tpts[k][1]):ctx.moveTo(tpts[k][0],tpts[k][1]); }
+      ctx.stroke();
+    }
     // guidance arrow to nearest gap
     if(pos && gap){ var g=px(gap.x,gap.y), me=px(pos.x,pos.y);
       ctx.strokeStyle="rgba(255,180,58,.9)"; ctx.lineWidth=3*dpr; ctx.setLineDash([8*dpr,6*dpr]);
@@ -542,9 +568,14 @@
 
   // ---------- controls ----------
   document.getElementById("followBtn").onclick=function(){follow=true;fitView();setFollowBtn();};
-  document.getElementById("lakeBtn").onclick=function(){follow=false;fitAll();setFollowBtn();};
+  document.getElementById("lakeBtn").onclick=function(){follow=false;fitTrip();setFollowBtn();};
   document.getElementById("satBtn").onclick=function(){ basemap=!basemap;
     this.classList.toggle("accent",basemap); this.textContent=basemap?"Sat":"Sat off"; };
+  var SWATHS=[60,100,150,30,0];
+  document.getElementById("swathBtn").onclick=function(){
+    var i=(SWATHS.indexOf(swathFt)+1)%SWATHS.length; swathFt=SWATHS[i];
+    this.textContent=swathFt?("Swath "+swathFt+"ft"):"Swath off";
+    this.classList.toggle("accent",swathFt>0); };
   function setFollowBtn(){ document.getElementById("followBtn").classList.toggle("accent",follow);
     document.getElementById("lakeBtn").classList.toggle("accent",!follow); }
   document.getElementById("resetBtn").onclick=function(){
